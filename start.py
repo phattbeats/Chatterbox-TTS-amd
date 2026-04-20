@@ -1878,7 +1878,7 @@ def install_rocm_windows_wheels(venv_pip, root_dir):
     # Install from local wheels using --find-links (no index lookup)
     print_substep(f"Installing {len(wheel_paths)} wheel(s) from local files...")
     wheel_args = " ".join([f'"{w}"' for w in wheel_paths])
-    cmd = f'"{venv_pip}" install --no-index --find-links "{wheels_dir}" {wheel_args}'
+    cmd = f'"{venv_pip}" install --find-links "{wheels_dir}" {wheel_args}'
 
     success = run_command_with_progress(cmd, description="Installing ROCm wheels")
     if not success:
