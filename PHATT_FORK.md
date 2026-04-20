@@ -1,6 +1,6 @@
 # PHATT TECH FORK — AMD ROCm for Windows
 
-**Unofficial fork of [devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server)**  
+**Unofficial fork of [devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server)**
 Adds AMD ROCm support for Windows (AMD Radeon RX 6000 series, gfx1030/gfx1031/gfx1032).
 
 > :zap: **2.3x faster than CPU** on short-turn multi-voice inference (RTF 1.30x on RX 6750 XT, measured April 2026)
@@ -75,28 +75,9 @@ New install type that pre-flight checks for AMD gfx103X GPU before installing. P
 
 ---
 
-## Wheel Index
-
-Wheels are hosted at `https://wheels.phatt.vip/rocm-windows/simple/`.
-
-| Wheel | Version | Size |
-|---|---|---|
-| rocm | 7.1.1 | ~10 MB |
-| rocm-sdk-core | 7.1.1 | ~200 MB |
-| rocm-sdk-devel | 7.1.1 | ~300 MB |
-| rocm-sdk-libraries-gfx103x-all | 7.1.1 | ~400 MB |
-| torch | 2.9.1+rocmsdk | ~600 MB |
-| torchaudio | 2.9.0+rocmsdk | ~200 MB |
-| torchvision | 0.24.0+rocmsdk | ~400 MB |
-
-Built by [AMD TheRock (guinmoon)](https://github.com/TheRockX/rocm-windows-build). Redistributed under MIT license. See [NOTICE](./NOTICE).
-
----
-
 ## Known Limitations
 
 - **ROCm on Windows is experimental.** AMD's official position is that ROCm is not supported on Windows. This fork exists because some users have it working.
-- **No guarantee of continuous availability** of the wheel index. It is maintained on a best-effort basis by PHATT TECH.
 - **No commercial support.** For commercial deployment of GPU-accelerated Chatterbox TTS, consult the official devnen repository.
 - **RX 7000 series untested.** Your mileage may vary.
 - **Audio export uses soundfile fallback** on standard Windows Python — functionally equivalent but slightly different encoding path than the torchaudio path on Linux.
@@ -117,7 +98,7 @@ Check if it's a HIP/convolution crash (0xC0000005). If so, verify the cudnn disa
 
 ### Wheels fail to download
 
-Verify `https://wheels.phatt.vip/rocm-windows/simple/` is reachable from your network. If not, open an issue at [github.com/phattbeats/Chatterbox-TTS-Server](https://github.com/phattbeats/Chatterbox-TTS-Server/issues).
+The launcher downloads wheel files from GitHub releases. If download fails, check your network connection and try again. If the problem persists, open an issue at [github.com/phattbeats/Chatterbox-TTS-Server](https://github.com/phattbeats/Chatterbox-TTS-Server/issues).
 
 ---
 
@@ -139,7 +120,7 @@ The `feature/rocm-windows-support` branch will be kept up to date with upstream 
 ## Credits
 
 - **AMD TheRock (guinmoon)** — pre-built ROCm wheels for Windows
-- **PHATT TECH** — packaging, indexing, integration testing
+- **PHATT TECH** — packaging, integration testing
 - **devnen** — upstream Chatterbox TTS Server
 
 See [NOTICE](./NOTICE) for full attribution.
