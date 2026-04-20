@@ -34,10 +34,11 @@ python start.py --rocm-windows
 ```
 
 The launcher will:
-- Detect your AMD GPU and validate gfx103X architecture
-- Download and install 7 pre-built ROCm + PyTorch wheels (~2.1 GB)
+- Detect your AMD GPU via Vulkan (no ROCm runtime required for detection)
+- Download 5 wheel files from GitHub (~2.4 GB total)
+- Install PyTorch ROCm + ROCm SDK locally (no pip index needed)
 - Patch the Chatterbox watermarker to be gracefully optional
-- Print an experimental warning (this is expected)
+- Print an experimental warning (expected — ROCm on Windows is unofficial)
 
 ### 2. Run
 
