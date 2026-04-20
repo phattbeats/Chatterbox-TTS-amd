@@ -1277,7 +1277,13 @@ lspci | grep VGA
 ### AMD GPU Issues
 
 *   **ROCm not working on Windows:**
-    - ROCm only supports Linux - use CPU mode on Windows with AMD GPUs
+    - ROCm only supports Linux by default - use CPU mode on Windows with AMD GPUs
+    - **RX 6000 series exception:** An unofficial fork
+      ([phatt-tech/Chatterbox-TTS-Server](https://github.com/phatt-tech/Chatterbox-TTS-Server))
+      adds AMD ROCm support for Windows (gfx1030/gfx1031/gfx1032) via
+      `python start.py --rocm-windows`. See that fork's
+      [PHATT_FORK.md](https://github.com/phatt-tech/Chatterbox-TTS-Server/blob/feature/rocm-windows-support/PHATT_FORK.md)
+      for details. This is experimental and not supported by devnen.
     - The launcher will warn you if you select ROCm on Windows
 
 ### General Issues
