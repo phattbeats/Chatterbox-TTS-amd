@@ -1,108 +1,104 @@
-# PHATT TECH FORK — AMD ROCm for Windows
+# PHATT TECH Fork — AMD ROCm for Windows
 
 **Unofficial fork of [devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server)**
-Adds AMD ROCm support for Windows (AMD Radeon RX 6000 series, gfx1030/gfx1031/gfx1032).
+Adds AMD Radeon RX 6000 series GPU support to Chatterbox TTS Server on Windows 11.
 
-> :zap: **2.3x faster than CPU** on short-turn multi-voice inference (RTF 1.30x on RX 6750 XT, measured April 2026)
+> **RTF 1.30x** on RX 6750 XT — 2.3x faster than CPU (measured April 2026)
 
 ---
 
-## Hardware Requirements
+## Prerequisites
 
-| Component | Requirement |
+Before installing, make sure your system has:
+
+| | |
 |---|---|
-| GPU | AMD Radeon RX 6000 series (gfx1030/gfx1031/gfx1032) — RX 6700, 6750 XT, 6800 XT confirmed |
-| VRAM | 8 GB minimum, 12 GB recommended |
-| OS | Windows 11 (build 22H2+) |
-| Python | 3.12 |
-| Driver | AMD ROCm for Windows 6.2+ |
+| **GPU** | AMD Radeon RX 6700 / 6750 XT / 6800 XT (gfx1030/gfx1031/gfx1032) |
+| **OS** | Windows 11 (22H2 or later) |
+| **AMD Driver** | Latest from [amd.com/support](https://www.amd.com/en/support) |
+| **AMD ROCm** | Install from [amd.com/rocm](https://rocm.docs.amd.com/en/latest/deploy/windows/quick-start.html) — required for GPU inference |
+| **Python** | 3.10 or later (installer will find it; [python.org/downloads](https://www.python.org/downloads/) if missing) |
 
 ### Unsupported
 
-- NVIDIA GPUs (CUDA path not available on this fork)
-- AMD RX 7000 series (gfx1100+) — may work, untested
+- NVIDIA GPUs — use the [upstream Chatterbox TTS Server](https://github.com/devnen/Chatterbox-TTS-Server) instead
+- AMD RX 7000 series (gfx1100+) — may work, unconfirmed
 - Windows 10
 
 ---
 
-## Installation
+## Quick Start
 
-### 1. Install (one-time)
+### One-click install + run
 
-```bash
-python start.py --rocm-windows
-```
+**Double-click `start.bat`** — this runs the full install automatically.
 
-The launcher will:
-- Detect your AMD GPU via Vulkan (no ROCm runtime required for detection)
-- Download 5 wheel files from GitHub (~2.4 GB total)
-- Install PyTorch ROCm + ROCm SDK locally (no pip index needed)
-- Patch the Chatterbox watermarker to be gracefully optional
-- Print an experimental warning (expected — ROCm on Windows is unofficial)
+On first run it will:
+1. Detect your AMD GPU
+2. Download ROCm + PyTorch wheel files (~2.4 GB from GitHub)
+3. Install everything into a virtual environment
+4. Start the server at `http://localhost:8000`
 
-### 2. Run
+That's it. You don't need to install Python manually, download wheels separately, or run any commands.
 
-```bash
-python start.py
-```
+### After first install
 
-Server starts on `http://localhost:8000`. GPU acceleration is automatic when AMD GPU is available.
+Just double-click `start.bat` again to launch. It will skip the download and start the server directly.
 
----
+### `start-rocm.bat` — same thing
 
-## What Changed
-
-### `engine.py` — cudnn/MIOpen disabled on gfx103X Windows
-
-HIP convolutions crash with `0xC0000005` on AMD RX 6000 series under Windows ROCm. This fork disables `torch.backends.cudnn.enabled` automatically when a gfx103X AMD GPU is detected on Windows.
-
-```python
-if torch.cuda.is_available() and platform.system() == "Windows":
-    props = torch.cuda.get_device_properties(0)
-    if getattr(props, 'gcnArchName', '').startswith('gfx103'):
-        torch.backends.cudnn.enabled = False
-```
-
-No-op on NVIDIA GPUs, Linux ROCm, or non-gfx103X AMD GPUs.
-
-### `utils.py` — soundfile fallback for audio export
-
-`torchaudio.save()` fails on standard Windows Python (requires FFmpeg DLLs). This fork falls back to `soundfile` automatically when torchaudio cannot save.
-
-### `start.py` — `--rocm-windows` flag
-
-New install type that pre-flight checks for AMD gfx103X GPU before installing. Prints experimental banner after install.
+`start-rocm.bat` is an alias for the same launcher. Use whichever you prefer.
 
 ---
 
-## Known Limitations
+## How It Works
 
-- **ROCm on Windows is experimental.** AMD's official position is that ROCm is not supported on Windows. This fork exists because some users have it working.
-- **No commercial support.** For commercial deployment of GPU-accelerated Chatterbox TTS, consult the official devnen repository.
-- **RX 7000 series untested.** Your mileage may vary.
-- **Audio export uses soundfile fallback** on standard Windows Python — functionally equivalent but slightly different encoding path than the torchaudio path on Linux.
+This fork makes four changes to the upstream Chatterbox TTS Server:
+
+1. **AMD GPU detection (Windows)** — upstream uses `rocm-smi` which only runs on Linux. This fork detects AMD GPUs using Windows-native tools (Vulkan ICD + registry), no ROCm runtime required for detection.
+
+2. **ROCm wheel install** — downloads pre-built ROCm + PyTorch wheels from the [v0.1.0-rocm-wheels release](https://github.com/phattbeats/Chatterbox-TTS-Server/releases/tag/v0.1.0-rocm-wheels) (~2.4 GB) and installs from local files. No pip index lookup needed.
+
+3. **HIP crash fix** — AMD HIP convolutions crash (`0xC0000005`) on gfx103X GPUs under Windows ROCm. This fork disables `torch.backends.cudnn.enabled` when an AMD gfx103X GPU is detected on Windows.
+
+4. **Audio export** — `torchaudio.save()` requires FFmpeg DLLs on Windows. The fork falls back to `soundfile` automatically when torchaudio cannot save.
 
 ---
 
 ## Troubleshooting
 
-### `torch.cuda.is_available()` returns False
+### "AMD GPU: Not detected"
 
-1. Verify AMD GPU is detected: `python -c "import torch; print(torch.cuda.get_device_name(0))"`
-2. Check AMD driver is current: [amd.com/drive](https://www.amd.com/en/support)
-3. Verify ROCm is installed: `rocm-smi` in a command prompt
+Your AMD GPU is not visible to the detection script. Check:
+- AMD driver is installed and up to date at [amd.com/support](https://www.amd.com/en/support)
+- AMD ROCm is installed (required for GPU inference, not just detection)
+- Your GPU is RX 6000 series — other AMD GPUs are not confirmed working
 
-### Server crashes on generation
+### Server starts but is slow
 
-Check if it's a HIP/convolution crash (0xC0000005). If so, verify the cudnn disable patch in `engine.py` is applied. The `start.py` launcher patches this automatically.
+GPU acceleration is not active. Verify ROCm is working:
 
-### Wheels fail to download
+```cmd
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
 
-The launcher downloads wheel files from GitHub releases. If download fails, check your network connection and try again. If the problem persists, open an issue at [github.com/phattbeats/Chatterbox-TTS-Server](https://github.com/phattbeats/Chatterbox-TTS-Server/issues).
+If it returns `False`, ROCm is not installed or not recognized. Reinstall ROCm from [amd.com/rocm](https://rocm.docs.amd.com/en/latest/deploy/windows/quick-start.html).
+
+### Wheel download fails or is slow
+
+The launcher downloads ~2.4 GB from GitHub. If your connection is slow or interrupted:
+- The downloaded wheels are cached in the `wheels/` folder — re-running `start.bat` will skip already-downloaded files
+- If you need to start fresh, delete the `wheels/` folder and run `start.bat` again
+
+### "ROCm wheel install had issues" warning
+
+The PyTorch/ROCm wheels failed to install. This is most commonly caused by:
+1. Python version mismatch — make sure you have Python 3.10 or 3.12 (not 3.11)
+2. Insufficient disk space (~5 GB free needed for the full install)
 
 ---
 
-## Upstream Tracking
+## Upstream
 
 This fork tracks `devnen/Chatterbox-TTS-Server`. To rebase on latest upstream:
 
@@ -113,14 +109,10 @@ git merge upstream/main
 git push origin main
 ```
 
-The `feature/rocm-windows-support` branch will be kept up to date with upstream changes.
-
----
-
 ## Credits
 
-- **AMD TheRock (guinmoon)** — pre-built ROCm wheels for Windows
-- **PHATT TECH** — packaging, integration testing
-- **devnen** — upstream Chatterbox TTS Server
+- **guinmoon (AMD TheRock)** — pre-built ROCm wheels for Windows
+- **devnen** — upstream [Chatterbox TTS Server](https://github.com/devnen/Chatterbox-TTS-Server)
+- **PHATT TECH** — fork integration and validation
 
-See [NOTICE](./NOTICE) for full attribution.
+Full attribution in [NOTICE](./NOTICE).
