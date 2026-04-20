@@ -88,6 +88,7 @@ INSTALL_CPU = "cpu"
 INSTALL_NVIDIA = "nvidia"
 INSTALL_NVIDIA_CU128 = "nvidia-cu128"
 INSTALL_ROCM = "rocm"
+INSTALL_ROCM_WINDOWS = "rocm-windows"
 
 # Requirements file mapping
 REQUIREMENTS_MAP = {
@@ -95,6 +96,7 @@ REQUIREMENTS_MAP = {
     INSTALL_NVIDIA: "requirements-nvidia.txt",
     INSTALL_NVIDIA_CU128: "requirements-nvidia-cu128.txt",
     INSTALL_ROCM: "requirements-rocm.txt",
+    INSTALL_ROCM_WINDOWS: "requirements-rocm-windows.txt",
 }
 
 # ROCm init requirements file (installed before main requirements)
@@ -1542,7 +1544,8 @@ def perform_installation(venv_pip, install_type, root_dir):
         return False
 
     # ROCm requires a two-step install: ROCm PyTorch wheels first, then deps
-    if install_type == INSTALL_ROCM:
+    # (rocm-windows uses pre-built wheels from phatt.vip, no init file needed)
+    if install_type in (INSTALL_ROCM, INSTALL_ROCM_WINDOWS):
         rocm_init_path = root_dir / REQUIREMENTS_ROCM_INIT
         if not rocm_init_path.exists():
             print_error(f"ROCm init file not found: {REQUIREMENTS_ROCM_INIT}")
@@ -2197,6 +2200,7 @@ Examples:
   python start.py --nvidia-cu128     # Install/start with NVIDIA CUDA 12.8
   python start.py --cpu              # Install/start with CPU only
   python start.py --rocm             # Install/start with AMD ROCm
+  python start.py --rocm-windows    # Install/start with AMD ROCm for Windows
   python start.py --portable         # Use portable mode (Windows)
   python start.py --no-portable      # Use standard venv (Windows)
   python start.py -v                 # Verbose mode (show all output)
@@ -2233,6 +2237,11 @@ Examples:
     )
     install_group.add_argument(
         "--rocm", action="store_true", help="Install AMD ROCm version (Linux only)"
+    )
+    install_group.add_argument(
+        "--rocm-windows",
+        action="store_true",
+        help="Install AMD ROCm version for Windows (AMD RX 6000 series, gfx103X)",
     )
 
     # Environment mode (Windows)
@@ -2275,6 +2284,8 @@ def get_install_type_from_args(args):
         return INSTALL_NVIDIA_CU128
     elif args.rocm:
         return INSTALL_ROCM
+    elif args.rocm_windows:
+        return INSTALL_ROCM_WINDOWS
 
     return None
 
@@ -2545,7 +2556,20 @@ def main():
         print()
         print_substep(f"Selected: {type_name}", "done")
 
+        # rocm-windows: pre-flight GPU validation
+        if install_type == INSTALL_ROCM_WINDOWS:
+            import torch
+            if not torch.cuda.is_available():
+                print_error("CUDA not available. --rocm-windows requires AMD GPU with ROCm support.")
+                sys.exit(1)
+            props = torch.cuda.get_device_properties(0)
+            arch = getattr(props, "gcnArchName", "") or ""
+            if not arch.startswith("gfx103"):
+                print_warning(f"Expected AMD gfx103X GPU (RX 6000 series), got: {arch}")
+                print_warning("This flag is designed for RX 6700/6750/6800 XT. May not work on other GPUs.")
+
         # ROCm warning on Windows
+        # Only warn for Linux ROCm on Windows; rocm-windows is designed for this
         if install_type == INSTALL_ROCM and is_windows():
             print()
             print_warning("=" * 60)
@@ -2606,6 +2630,15 @@ def main():
                 print(f"     pip install -r {requirements_file}")
             print()
             sys.exit(1)
+
+        # rocm-windows: print experimental warning
+        if install_type == INSTALL_ROCM_WINDOWS:
+            print_warning("=" * 60)
+            print_warning("  ⚡ PHATT TECH FORK — EXPERIMENTAL ROCm FOR WINDOWS")
+            print_warning("  This is not officially supported by devnen. Use at your own risk.")
+            print_warning("  For issues, open a ticket at github.com/phatt-tech/Chatterbox-TTS-Server")
+            print_warning("=" * 60)
+            print()
 
         # Patch chatterbox to make watermarker gracefully optional
         # and fix MPS float64 crash on Apple Silicon (if not already fixed in fork)

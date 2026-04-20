@@ -6,6 +6,25 @@ import logging
 import random
 import numpy as np
 import torch
+import platform
+
+# ── Phatt Tech: disable cudnn/MIOpen on gfx103X Windows ──────────────────────
+# MIOpen convolution kernels crash with HIP error 0xC0000005 on AMD RX 6000
+# series (gfx1030/1031/1032) under Windows ROCm. Disable cudnn when a gfx103X
+# AMD GPU is detected to prevent sporadic crashes during generation.
+# This is a no-op on other platforms or NVIDIA GPUs.
+# ────────────────────────────────────────────────────────────────────────────────
+if torch.cuda.is_available() and platform.system() == "Windows":
+    try:
+        props = torch.cuda.get_device_properties(0)
+        arch = getattr(props, "gcnArchName", "") or ""
+        if arch.startswith("gfx103"):
+            torch.backends.cudnn.enabled = False
+            logging.getLogger(__name__).info(
+                "Disabled cudnn/MIOpen for %s on Windows (stability fix)", arch
+            )
+    except Exception:
+        pass  # Fail open — never crash the server over GPU detection
 from typing import Optional, Tuple
 from pathlib import Path
 
