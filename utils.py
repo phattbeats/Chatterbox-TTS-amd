@@ -468,8 +468,18 @@ def save_audio_tensor_to_file(
         )
         return True
     except Exception as e:
-        logger.error(f"Error saving audio tensor to {file_path}: {e}", exc_info=True)
-        return False
+        # torchaudio 2.9+ requires torchcodec/FFmpeg DLLs not present on standard
+        # Windows Python. Fall back to soundfile (already imported as sf).
+        import traceback
+        logger.warning(f"torchaudio.save failed ({e}); falling back to soundfile")
+        try:
+            audio_np = audio_tensor_cpu.numpy().T if audio_tensor_cpu.ndim == 2 else audio_tensor_cpu.numpy()
+            sf.write(str(file_path), audio_np, sample_rate)
+            logger.info(f"Saved audio tensor via soundfile fallback to {file_path}")
+            return True
+        except Exception as sf_e:
+            logger.error(f"soundfile fallback also failed for {file_path}: {sf_e}", exc_info=True)
+            return False
 
 
 # --- Audio Manipulation Utilities ---
