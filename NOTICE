@@ -1,0 +1,48 @@
+NOTICE
+======
+
+This pip index contains pre-built AMD ROCm wheels for Windows, rebuilt from
+guinmoon's open-source ROCm rebuild project.
+
+CREDITS
+-------
+• AMD TheRock (guinmoon) — primary wheel builder
+  https://github.com/TheRockX/rocm-windows-build
+
+• PHATT TECH Fork — packaging, indexing, distribution
+  https://github.com/phatt-tech/Chatterbox-TTS-Server
+
+UPSTREAM REPOSITORIES
+---------------------
+• guinmoon/rocm-windows-build: https://github.com/guinmoon/rocm-windows-build
+• AMD ROCm: https://github.com/ROCm/ROCm
+• devnen/Chatterbox-TTS-Server: https://github.com/devnen/Chatterbox-TTS-Server
+
+WHEELS IN THIS INDEX
+--------------------
+The following wheels were rebuilt for Windows x86_64 Python 3.12 by AMD TheRock
+(guinmoon) and are redistributed here in accordance with their MIT license:
+
+  - rocm (meta-package)
+  - rocm-sdk-core
+  - rocm-sdk-devel
+  - rocm-sdk-libraries-gfx103x-all
+  - torch (PyTorch 2.9.1 + ROCm support)
+  - torchaudio (2.9.0 + ROCm support)
+  - torchvision (0.24.0 + ROCm support)
+
+AVAILABILITY & SUPPORT
+----------------------
+These wheels are provided as-is on a best-effort basis. PHATT TECH does not
+guarantee continuous availability of this index. For production use, refer to
+the official AMD ROCm wheels or build from source.
+
+DISCLAIMER
+----------
+These wheels are not officially supported by AMD, PyTorch, or devnen.
+Usage is at your own risk. PHATT TECH makes no warranty of any kind.
+
+COMMERCIAL USE
+--------------
+For commercial deployment of Chatterbox TTS with GPU acceleration, consult
+the official channels: https://github.com/devnen/Chatterbox-TTS-Server
