@@ -1,5 +1,50 @@
 # Chatterbox TTS Server: OpenAI-Compatible API with Web UI, Large Text Handling & Built-in Voices
 
+<div align="center">
+
+# AMD Windows Fork
+
+**Unofficial fork of [devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server)**
+Adds AMD ROCm support for Windows (AMD Radeon RX 6000 series, gfx1030/gfx1031/gfx1032).
+
+> **2.3x faster than CPU** on short-turn inference (RTF 1.30x on RX 6750 XT)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+</div>
+
+## AMD GPU Support (Windows)
+
+| GPU Series | Architecture | Example Cards | Status |
+|---|---|---|---|
+| AMD Radeon RX 6000 | gfx1030 / gfx1031 / gfx1032 | RX 6700, 6750 XT, 6800 XT | Tested |
+| AMD Radeon RX 7000 | gfx1100+ | RX 7900 XTX | Untested |
+| NVIDIA (all) | CUDA | Any RTX/GTX | Not supported in this fork |
+
+> [!CAUTION]
+> This is an **unofficial AMD Windows fork**. ROCm on Windows is experimental.
+
+## Quickstart (AMD Windows)
+
+```bash
+# Install (requires AMD RX 6000 series GPU + Python 3.12)
+python start.py --rocm-windows
+
+# Run
+python start.py
+```
+
+## What's Changed from Upstream
+
+| Change | File | Impact |
+|---|---|---|
+| Disable cudnn on gfx103X Windows | `engine.py` | Prevents HIP crash 0xC0000005 |
+| soundfile fallback for torchaudio.save | `utils.py` | Fixes audio export on torchaudio 2.9+ |
+| `--rocm-windows` flag | `start.py` | Pre-flight GPU check + experimental banner |
+| Pre-built ROCm wheel index | `requirements-rocm-windows.txt` | 7 pre-built wheels for Windows AMD |
+
+---
+
 **Self-host Resemble AI's [Chatterbox](https://github.com/resemble-ai/chatterbox) open-source TTS family (Original + Multilingual + Turbo) behind an OpenAI‑compatible API and a modern Web UI. The complete lineup includes the original high-quality model, multilingual support for 23 languages, and Chatterbox‑Turbo—a streamlined 350M-parameter model with dramatically improved throughput and native paralinguistic tags like `[laugh]`, `[cough]`, and `[chuckle]` for more expressive voice agents and narration. Features voice cloning, large text processing via intelligent chunking, audiobook generation, and consistent, reproducible voices using built-in ready-to-use voices and a generation seed feature.**
 
 > 🚀 **Try it now!** Test the full TTS server with voice cloning and audiobook generation in Google Colab - no installation required! To use it, please run cells 1 through 4 one at a time. After running cell 4, click on the "https://localhost:8004" link that appears in the output, and your web browser will open the UI from the .colab.dev domain. Read the instructions [here](https://github.com/devnen/Chatterbox-TTS-Server/blob/main/README_Colab.md).

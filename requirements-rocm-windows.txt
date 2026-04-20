@@ -1,11 +1,11 @@
-# requirements-rocm-windows.txt — Phatt Tech Fork
+# requirements-rocm-windows.txt — AMD Windows fork
 # Windows ROCm support for AMD Radeon RX 6000 series (gfx1030/1031/1032)
 #
 # Install: pip install -r requirements-rocm-windows.txt
 # Then:    pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
 #
 # Uses wheels from https://wheels.phatt.vip/rocm-windows/simple/
-# See PHATT_FORK.md for full install walkthrough.
+# See README.md for full install walkthrough.
 
 --extra-index-url https://wheels.phatt.vip/rocm-windows/simple/
 
