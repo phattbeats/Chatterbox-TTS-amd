@@ -69,8 +69,11 @@ SERVER_SCRIPT = "server.py"
 CONFIG_FILE = "config.yaml"
 
 # Embedded Python settings (Windows fallback for Python 3.11+)
+# NOTE: Python 3.12 is used because the ROCm wheels (torch, torchaudio, torchvision)
+# are built for cp312 and are not available for cp310. All other dependencies
+# (conformer, s3tokenizer, etc.) support 3.12 without issues.
 EMBEDDED_PYTHON_DIR = "python_embedded"
-EMBEDDED_PYTHON_VERSION = "3.10.11"
+EMBEDDED_PYTHON_VERSION = "3.12.8"
 EMBEDDED_PYTHON_URL = (
     f"https://www.python.org/ftp/python/{EMBEDDED_PYTHON_VERSION}/"
     f"python-{EMBEDDED_PYTHON_VERSION}-embed-amd64.zip"
@@ -80,8 +83,8 @@ GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 # SHA-256 hash of the embeddable zip for integrity verification.
 # Set to "" to skip verification (not recommended for production).
 # To compute: download the file from EMBEDDED_PYTHON_URL, then run:
-#   python -c "import hashlib; print(hashlib.sha256(open('python-3.10.11-embed-amd64.zip','rb').read()).hexdigest())"
-EMBEDDED_PYTHON_SHA256 = ""
+#   python -c "import hashlib; print(hashlib.sha256(open('python-3.12.8-embed-amd64.zip','rb').read()).hexdigest())"
+EMBEDDED_PYTHON_SHA256 = "8d3f33be9eb810f23c102f08475af2854e50484b8e4e06275e937be61ce3d2fb"
 
 # Installation type identifiers
 INSTALL_CPU = "cpu"
@@ -671,6 +674,9 @@ def is_embedded_python_available(root_dir):
     """
     Check if embedded Python is already set up and functional.
 
+    Also verifies the installed version matches EMBEDDED_PYTHON_VERSION
+    to ensure wheel compatibility (e.g. cp310 wheels vs cp312 wheels).
+
     Args:
         root_dir: Root directory of the project
 
@@ -689,9 +695,18 @@ def is_embedded_python_available(root_dir):
             text=True,
             timeout=10,
         )
-        return result.returncode == 0
+        if result.returncode != 0:
+            return False
+        # Verify version matches (wheel ABI compatibility)
+        version_output = result.stdout.strip()
+        expected = f"Python {EMBEDDED_PYTHON_VERSION}"
+        if version_output != expected:
+            # Version mismatch — needs reinstall to match wheel ABI
+            return False
     except Exception:
         return False
+
+    return True
 
 
 def download_file(url, dest_path, description="Downloading"):
@@ -938,7 +953,7 @@ if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
 
 def setup_embedded_python(root_dir):
     """
-    Download and configure an embedded Python 3.10 environment for Windows.
+    Download and configure an embedded Python environment for Windows.
 
     This creates a fully self-contained Python installation inside the
     project folder with pip bootstrapped and ready to install packages.
