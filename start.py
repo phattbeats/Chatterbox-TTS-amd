@@ -1280,11 +1280,39 @@ def _detect_amd_gpu_rocm_smi():
 
 def _detect_amd_gpu_windows():
     """
-    Detect AMD GPU on Windows using Vulkan.
+    Detect AMD GPU on Windows using Vulkan + registry + WMI.
 
-    Vulkan is available on any Windows system with AMD drivers installed.
-    Parses the DeviceID string which contains the marketing name.
+    Tries in order:
+    1. vulkaninfo --json (Vulkan ICD reveals AMD vendor ID + device name)
+    2. vulkaninfo plain text (fallback for non-standard JSON output)
+    3. Windows registry (DirectX adapter key, always available)
+    4. WMI via WMIC or PowerShell (always available on Windows)
     """
+    # Layer 1: vulkaninfo --json
+    result = _try_vulkaninfo_json()
+    if result[0]:
+        return result
+
+    # Layer 2: vulkaninfo plain text
+    result = _detect_amd_gpu_windows_fallback()
+    if result[0]:
+        return result
+
+    # Layer 3: Windows registry
+    result = _detect_amd_gpu_windows_registry()
+    if result[0]:
+        return result
+
+    # Layer 4: WMI via WMIC / PowerShell
+    result = _detect_amd_gpu_windows_wmi()
+    if result[0]:
+        return result
+
+    return False, None
+
+
+def _try_vulkaninfo_json():
+    """Layer 1: try vulkaninfo --json for AMD GPU."""
     try:
         result = subprocess.run(
             ["vulkaninfo", "--json"],
@@ -1292,7 +1320,6 @@ def _detect_amd_gpu_windows():
             text=True,
             timeout=30,
         )
-
         if result.returncode != 0:
             return False, None
 
@@ -1302,7 +1329,6 @@ def _detect_amd_gpu_windows():
         except json.JSONDecodeError:
             return False, None
 
-        # Walk the Vulkan JSON structure to find AMD device
         devices = (
             data.get("devices", []) or
             data.get(" Vulkan Info", {}).get("Devices", []) or
@@ -1313,18 +1339,14 @@ def _detect_amd_gpu_windows():
             device_name = dev.get("deviceName", "") or dev.get("device-name", "") or ""
             device_id_str = dev.get("deviceID_str", "") or ""
 
-            # Check for AMD Vendor ID (0x1002) in device ID string
             is_amd = "1002" in device_id_str.lower() or "amd" in device_name.lower()
-
             if is_amd and device_name:
                 return True, device_name
 
-        # Fallback: try parsing plain-text vulkaninfo
-        return _detect_amd_gpu_windows_fallback()
+        return False, None
 
     except FileNotFoundError:
-        # vulkaninfo not installed — try registry fallback
-        return _detect_amd_gpu_windows_registry()
+        return False, None
     except subprocess.TimeoutExpired:
         return False, None
     except Exception:
@@ -1369,14 +1391,15 @@ def _detect_amd_gpu_windows_fallback():
 
 def _detect_amd_gpu_windows_registry():
     """
-    Fallback: detect AMD GPU from Windows registry.
+    Layer 3: detect AMD GPU from Windows registry.
+
 
     Checks the DirectX adapter registry key which lists all graphics devices.
+    Iterates all subkeys (not just 0000) to find AMD adapters.
     """
     try:
         import winreg
         amd_key = None
-
         for flag in [0, winreg.KEY_READ | winreg.KEY_WOW64_32KEY]:
             try:
                 key = winreg.OpenKey(
@@ -1398,20 +1421,18 @@ def _detect_amd_gpu_windows_registry():
                 try:
                     subkey_name = winreg.EnumKey(amd_key, i)
                     i += 1
-                    if subkey_name == "0000":
+                    try:
+                        dev_key = winreg.OpenKey(amd_key, subkey_name)
                         try:
-                            dev_key = winreg.OpenKey(amd_key, subkey_name)
-                            try:
-                                driver_desc, _ = winreg.QueryValueEx(dev_key, "DriverDesc")
-                                driver_desc: str
-                                if "AMD" in driver_desc or "Radeon" in driver_desc or "ATI" in driver_desc:
-                                    return True, driver_desc
-                            except FileNotFoundError:
-                                pass
-                            finally:
-                                winreg.CloseKey(dev_key)
+                            driver_desc, _ = winreg.QueryValueEx(dev_key, "DriverDesc")
+                            if "AMD" in str(driver_desc) or "Radeon" in str(driver_desc) or "ATI" in str(driver_desc):
+                                return True, str(driver_desc)
                         except FileNotFoundError:
                             pass
+                        finally:
+                            winreg.CloseKey(dev_key)
+                    except FileNotFoundError:
+                        pass
                 except OSError:
                     break
         finally:
@@ -1419,6 +1440,48 @@ def _detect_amd_gpu_windows_registry():
 
         return False, None
 
+    except Exception:
+        return False, None
+
+
+def _detect_amd_gpu_windows_wmi():
+    """
+    Layer 4: detect AMD GPU using WMI via WMIC or PowerShell.
+
+
+    WMIC and PowerShell are available on all Windows installations
+    and can enumerate graphics hardware without any AMD-specific tools.
+    """
+    try:
+        # Try WMIC first (faster, available on all Windows)
+        result = subprocess.run(
+            ["wmic", "path", "win32_VideoController", "get", "name", "/format:list"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.split("\n"):
+                if "name=" in line.lower():
+                    name = line.split("=", 1)[-1].strip()
+                    if name and ("amd" in name.lower() or "radeon" in name.lower() or "ati" in name.lower()):
+                        return True, name
+        # WMIC failed — try PowerShell as fallback
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.strip().split("\n"):
+                name = line.strip()
+                if name and ("amd" in name.lower() or "radeon" in name.lower() or "ati" in name.lower()):
+                    return True, name
+        return False, None
+    except FileNotFoundError:
+        return False, None
     except Exception:
         return False, None
 
