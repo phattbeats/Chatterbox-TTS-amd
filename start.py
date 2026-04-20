@@ -1235,9 +1235,9 @@ def detect_nvidia_gpu():
         return False, None
 
 
-def detect_amd_gpu():
+def detect_amd_gpu_linux():
     """
-    Detect AMD GPU using rocm-smi.
+    Detect AMD GPU using rocm-smi (Linux-only).
 
     Returns:
         Tuple of (found: bool, gpu_name: str or None)
@@ -1272,6 +1272,80 @@ def detect_amd_gpu():
         return False, None
     except Exception:
         return False, None
+
+
+def detect_amd_gpu_windows():
+    """
+    Detect AMD GPU on Windows using WMI or Vulkan ICD registry.
+
+    Returns:
+        Tuple of (found: bool, gpu_name: str or None)
+    """
+    # Method 1: WMI (preferred) - built-in, no extra deps
+    try:
+        import wmi
+        for gpu in wmi.WMI().Win32_VideoController():
+            name = gpu.Name
+            # Check for AMD/Radeon/RX patterns
+            if any(p in name for p in ["AMD", "Radeon", "RX ", "RX-", "Radeon RX"]):
+                return True, name.strip()
+        # WMI available but no AMD GPU found
+        return False, None
+    except ImportError:
+        pass  # wmi not installed, try registry
+    except Exception:
+        pass  # WMI failed, try registry
+
+    # Method 2: Check Vulkan ICD registry (works without wmi module)
+    try:
+        import winreg
+        # Vulkan ICDs are registered under this key:
+        # HKLM\SOFTWARE\Khronos\Vulkan\Devices\<index>
+        # Each device has a `deviceName` value
+        vk_key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Khronos\Vulkan\Devices",
+            0,
+            winreg.KEY_READ,
+        )
+        try:
+            idx = 0
+            while True:
+                try:
+                    subkey_name = winreg.EnumKey(vk_key, idx)
+                    dev_key = winreg.OpenKey(vk_key, subkey_name, 0, winreg.KEY_READ)
+                    try:
+                        dev_name, _ = winreg.QueryValueEx(dev_key, "deviceName")
+                        if any(p in dev_name for p in ["AMD", "Radeon", "RX ", "Radeon RX"]):
+                            winreg.CloseKey(dev_key)
+                            winreg.CloseKey(vk_key)
+                            return True, dev_name.strip()
+                    except FileNotFoundError:
+                        pass
+                    winreg.CloseKey(dev_key)
+                except OSError:
+                    break
+                idx += 1
+        except OSError:
+            pass
+        winreg.CloseKey(vk_key)
+    except Exception:
+        pass
+
+    return False, None
+
+
+def detect_amd_gpu():
+    """
+    Detect AMD GPU.
+
+    Returns:
+        Tuple of (found: bool, gpu_name: str or None)
+    """
+    if is_windows():
+        return detect_amd_gpu_windows()
+    else:
+        return detect_amd_gpu_linux()
 
 
 def detect_gpu():
@@ -1332,17 +1406,19 @@ def show_installation_menu(gpu_info, default_choice):
     Returns:
         Selected installation type string
     """
-    # Map install types to menu numbers
-    MENU_MAP = {
-        "1": INSTALL_CPU,
-        "2": INSTALL_NVIDIA,
-        "3": INSTALL_NVIDIA_CU128,
-        "4": INSTALL_ROCM,
-    }
+    # Menu options — ROCm (4) only shown on Linux
+    options = [
+        ("1", "CPU Only", "No GPU acceleration - works on any system"),
+        ("2", "NVIDIA GPU (CUDA 12.1)", "Standard for RTX 20/30/40 series"),
+        ("3", "NVIDIA GPU (CUDA 12.8)", "For RTX 5090 / Blackwell GPUs only"),
+    ]
+    if is_linux():
+        options.append(("4", "AMD GPU (ROCm 6.1)", "For AMD GPUs on Linux"))
 
-    # Reverse map for showing default
+    # Build MENU_MAP from options so it matches what the user sees
+    MENU_MAP = {num: install_type for num, _, _ in options}
     REVERSE_MAP = {v: k for k, v in MENU_MAP.items()}
-    default_num = REVERSE_MAP[default_choice]
+    default_num = REVERSE_MAP.get(default_choice, "1")
 
     # Print GPU detection results
     print()
@@ -1368,28 +1444,13 @@ def show_installation_menu(gpu_info, default_choice):
     print("=" * 60)
     print()
 
-    # Menu options with descriptions
-    options = [
-        ("1", "CPU Only", "No GPU acceleration - works on any system"),
-        ("2", "NVIDIA GPU (CUDA 12.1)", "Standard for RTX 20/30/40 series"),
-        ("3", "NVIDIA GPU (CUDA 12.8)", "For RTX 5090 / Blackwell GPUs only"),
-        ("4", "AMD GPU (ROCm 6.1)", "For AMD GPUs on Linux"),
-    ]
-
     for num, name, desc in options:
         # Determine if this is the default
         is_default = num == default_num
-
-        # Check for special warnings
-        warning = ""
-        if num == "4" and is_windows():
-            warning = f" {Colors.YELLOW}⚠️ Not supported on Windows{Colors.RESET}"
-
         # Build the option line
         default_marker = f" {Colors.GREEN}[DEFAULT]{Colors.RESET}" if is_default else ""
-
         print(f"   [{num}] {name}{default_marker}")
-        print(f"       {Colors.DIM}{desc}{warning}{Colors.RESET}")
+        print(f"       {Colors.DIM}{desc}{Colors.RESET}")
         print()
 
     # Get user input
@@ -1406,7 +1467,8 @@ def show_installation_menu(gpu_info, default_choice):
             if choice in MENU_MAP:
                 return MENU_MAP[choice]
 
-            print_warning(f"   Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.")
+            valid = ', '.join(sorted(MENU_MAP.keys()))
+            print_warning(f"   Invalid choice '{choice}'. Please enter {valid}.")
             print()
 
         except (EOFError, KeyboardInterrupt):
