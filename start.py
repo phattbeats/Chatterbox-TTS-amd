@@ -108,6 +108,7 @@ INSTALL_NAMES = {
     INSTALL_NVIDIA: "NVIDIA GPU (CUDA 12.1)",
     INSTALL_NVIDIA_CU128: "NVIDIA GPU (CUDA 12.8 / Blackwell)",
     INSTALL_ROCM: "AMD GPU (ROCm 6.1)",
+    INSTALL_ROCM_WINDOWS: "AMD GPU (ROCm for Windows)",
 }
 
 # Chatterbox fork URL (used for CUDA 12.8 installation)
@@ -1237,11 +1238,18 @@ def detect_nvidia_gpu():
 
 def detect_amd_gpu():
     """
-    Detect AMD GPU using rocm-smi.
+    Detect AMD GPU. Uses Vulkan on Windows (rocm-smi is Linux-only).
 
     Returns:
         Tuple of (found: bool, gpu_name: str or None)
     """
+    if is_windows():
+        return _detect_amd_gpu_windows()
+    return _detect_amd_gpu_rocm_smi()
+
+
+def _detect_amd_gpu_rocm_smi():
+    """Detect AMD GPU using rocm-smi (Linux/macOS)."""
     try:
         result = subprocess.run(
             ["rocm-smi", "--showproductname"],
@@ -1251,25 +1259,165 @@ def detect_amd_gpu():
         )
 
         if result.returncode == 0 and result.stdout.strip():
-            # Parse output to find GPU name
             lines = result.stdout.strip().split("\n")
             for line in lines:
                 if "Card series" in line or "GPU" in line:
-                    # Extract the name part
                     parts = line.split(":")
                     if len(parts) > 1:
                         return True, parts[1].strip()
-
-            # If we got output but couldn't parse name, still report found
             return True, "AMD GPU (unknown model)"
 
         return False, None
 
     except FileNotFoundError:
-        # rocm-smi not found
         return False, None
     except subprocess.TimeoutExpired:
         return False, None
+    except Exception:
+        return False, None
+
+
+def _detect_amd_gpu_windows():
+    """
+    Detect AMD GPU on Windows using Vulkan.
+
+    Vulkan is available on any Windows system with AMD drivers installed.
+    Parses the DeviceID string which contains the marketing name.
+    """
+    try:
+        result = subprocess.run(
+            ["vulkaninfo", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            return False, None
+
+        import json
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return False, None
+
+        # Walk the Vulkan JSON structure to find AMD device
+        devices = (
+            data.get("devices", []) or
+            data.get(" Vulkan Info", {}).get("Devices", []) or
+            []
+        )
+
+        for dev in devices:
+            device_name = dev.get("deviceName", "") or dev.get("device-name", "") or ""
+            device_id_str = dev.get("deviceID_str", "") or ""
+
+            # Check for AMD Vendor ID (0x1002) in device ID string
+            is_amd = "1002" in device_id_str.lower() or "amd" in device_name.lower()
+
+            if is_amd and device_name:
+                return True, device_name
+
+        # Fallback: try parsing plain-text vulkaninfo
+        return _detect_amd_gpu_windows_fallback()
+
+    except FileNotFoundError:
+        # vulkaninfo not installed — try registry fallback
+        return _detect_amd_gpu_windows_registry()
+    except subprocess.TimeoutExpired:
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _detect_amd_gpu_windows_fallback():
+    """Parse plain-text vulkaninfo output for AMD GPU name."""
+    try:
+        result = subprocess.run(
+            ["vulkaninfo"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            return False, None
+
+        output = result.stdout
+        # AMD devices contain "0x1002" (Vendor ID) and a name like "Radeon RX 6750 XT"
+        lines = output.split("\n")
+        for i, line in enumerate(lines):
+            if "deviceName" in line and "Radeon" in line:
+                # e.g. "GPU 0      : Radeon RX 6750 XT        ...\n  deviceName = Radeon RX 6750 XT"
+                parts = line.split("=")
+                if len(parts) > 1:
+                    name = parts[1].strip()
+                    if name:
+                        return True, name
+            # Also catch "AMD Radeon" style names
+            if "AMD Radeon" in line or "Radeon RX" in line:
+                name = line.strip().split("=")[-1].strip()
+                if name and len(name) > 2:
+                    return True, name
+
+        return False, None
+
+    except Exception:
+        return False, None
+
+
+def _detect_amd_gpu_windows_registry():
+    """
+    Fallback: detect AMD GPU from Windows registry.
+
+    Checks the DirectX adapter registry key which lists all graphics devices.
+    """
+    try:
+        import winreg
+        amd_key = None
+
+        for flag in [0, winreg.KEY_READ | winreg.KEY_WOW64_32KEY]:
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}",
+                    0, flag
+                )
+                amd_key = key
+                break
+            except FileNotFoundError:
+                continue
+
+        if not amd_key:
+            return False, None
+
+        try:
+            i = 0
+            while True:
+                try:
+                    subkey_name = winreg.EnumKey(amd_key, i)
+                    i += 1
+                    if subkey_name == "0000":
+                        try:
+                            dev_key = winreg.OpenKey(amd_key, subkey_name)
+                            try:
+                                driver_desc, _ = winreg.QueryValueEx(dev_key, "DriverDesc")
+                                driver_desc: str
+                                if "AMD" in driver_desc or "Radeon" in driver_desc or "ATI" in driver_desc:
+                                    return True, driver_desc
+                            except FileNotFoundError:
+                                pass
+                            finally:
+                                winreg.CloseKey(dev_key)
+                        except FileNotFoundError:
+                            pass
+                except OSError:
+                    break
+        finally:
+            winreg.CloseKey(amd_key)
+
+        return False, None
+
     except Exception:
         return False, None
 
@@ -1317,6 +1465,8 @@ def get_default_choice(gpu_info):
         return INSTALL_NVIDIA
     elif gpu_info["amd"] and is_linux():
         return INSTALL_ROCM
+    elif gpu_info["amd"] and is_windows():
+        return INSTALL_ROCM_WINDOWS
     else:
         return INSTALL_CPU
 
@@ -1338,11 +1488,12 @@ def show_installation_menu(gpu_info, default_choice):
         "2": INSTALL_NVIDIA,
         "3": INSTALL_NVIDIA_CU128,
         "4": INSTALL_ROCM,
+        "5": INSTALL_ROCM_WINDOWS,
     }
 
     # Reverse map for showing default
     REVERSE_MAP = {v: k for k, v in MENU_MAP.items()}
-    default_num = REVERSE_MAP[default_choice]
+    default_num = REVERSE_MAP.get(default_choice, "1")
 
     # Print GPU detection results
     print()
@@ -1357,7 +1508,8 @@ def show_installation_menu(gpu_info, default_choice):
         print(f"   NVIDIA GPU: {Colors.DIM}Not detected{Colors.RESET}")
 
     if gpu_info["amd"]:
-        print_success(f"   AMD GPU:    Detected ({gpu_info['amd_name']})")
+        amd_type = " (ROCm for Windows)" if gpu_info["amd_name"] and "RX 6" in gpu_info["amd_name"] else ""
+        print_success(f"   AMD GPU:    Detected ({gpu_info['amd_name']}){amd_type}")
     else:
         print(f"   AMD GPU:    {Colors.DIM}Not detected{Colors.RESET}")
 
@@ -1374,6 +1526,7 @@ def show_installation_menu(gpu_info, default_choice):
         ("2", "NVIDIA GPU (CUDA 12.1)", "Standard for RTX 20/30/40 series"),
         ("3", "NVIDIA GPU (CUDA 12.8)", "For RTX 5090 / Blackwell GPUs only"),
         ("4", "AMD GPU (ROCm 6.1)", "For AMD GPUs on Linux"),
+        ("5", "AMD GPU (ROCm for Windows)", "For AMD RX 6000 series on Windows 11"),
     ]
 
     for num, name, desc in options:
@@ -1383,7 +1536,9 @@ def show_installation_menu(gpu_info, default_choice):
         # Check for special warnings
         warning = ""
         if num == "4" and is_windows():
-            warning = f" {Colors.YELLOW}⚠️ Not supported on Windows{Colors.RESET}"
+            warning = f" {Colors.YELLOW}⚠️  Not supported on Windows{Colors.RESET}"
+        if num == "5" and not is_windows():
+            warning = f" {Colors.YELLOW}⚠️  Windows 11 only{Colors.RESET}"
 
         # Build the option line
         default_marker = f" {Colors.GREEN}[DEFAULT]{Colors.RESET}" if is_default else ""
@@ -1406,7 +1561,7 @@ def show_installation_menu(gpu_info, default_choice):
             if choice in MENU_MAP:
                 return MENU_MAP[choice]
 
-            print_warning(f"   Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.")
+            print_warning(f"   Invalid choice '{choice}'. Please enter 1, 2, 3, 4, or 5.")
             print()
 
         except (EOFError, KeyboardInterrupt):
