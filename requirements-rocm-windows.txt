@@ -1,48 +1,5 @@
-# requirements-rocm-windows.txt — Phatt Tech Fork
-# Windows ROCm support for AMD Radeon RX 6000 series (gfx1030/1031/1032)
-#
-# Install: pip install -r requirements-rocm-windows.txt
-# Then:    pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
-#
-# Uses wheels from https://wheels.phatt.vip/rocm-windows/simple/
-# See PHATT_FORK.md for full install walkthrough.
-
---extra-index-url https://wheels.phatt.vip/rocm-windows/simple/
-
-# ROCm SDK meta-packages (7 wheels from guinmoon's rebuild)
-rocm==7.1.1
-rocm-sdk-core==7.1.1
-rocm-sdk-devel==7.1.1
-rocm-sdk-libraries-gfx103x-all==7.1.1
-
-# PyTorch ROCm wheels (Python 3.12, Windows x86_64)
-torch==2.9.1+rocmsdk20251207
-torchaudio==2.9.0+rocmsdk20251207
-torchvision==0.24.0+rocmsdk20251207
-
-# Chatterbox TTS dependencies (mirrors requirements-rocm.txt, no torch pins)
-conformer==0.3.2
-diffusers==0.29.0
-transformers==4.46.3
-einops>=0.7.0
-omegaconf==2.3.0
-resampy==0.4.3
-resemble-perth==1.0.1
-fastapi>=0.100.0,<0.116.0
-uvicorn[standard]>=0.27.0
-numpy>=1.24.0
-soundfile>=0.12.0
-huggingface_hub>=0.20.0
-descript-audio-codec==1.0.0
-safetensors>=0.4.0
-pydantic>=2.0.0
-python-dotenv>=1.0.0
-Jinja2>=3.1.2,<3.2.0
-python-multipart>=0.0.5
-requests>=2.28.0
-PyYAML>=6.0
-tqdm>=4.65.0
-pydub>=0.25.0
-praat-parselmouth>=0.4.0
-librosa>=0.10.0
-hf-transfer>=0.1.4
+# DEPRECATED — wheels.phatt.vip is offline.
+# For --rocm-windows (INSTALL_ROCM_WINDOWS), start.py downloads wheels
+# directly from https://github.com/phattbeats/Chatterbox-TTS-Server/releases/tag/v0.1.0-rocm-wheels
+# and installs them locally. This file is no longer used.
+# Keep here for reference only; do not use.

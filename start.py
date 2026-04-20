@@ -100,6 +100,7 @@ REQUIREMENTS_MAP = {
 }
 
 # ROCm init requirements file (installed before main requirements)
+# NOTE: INSTALL_ROCM_WINDOWS does NOT use this file — it downloads wheels from GitHub instead.
 REQUIREMENTS_ROCM_INIT = "requirements-rocm-init.txt"
 
 # Human-readable names for installation types
@@ -108,6 +109,7 @@ INSTALL_NAMES = {
     INSTALL_NVIDIA: "NVIDIA GPU (CUDA 12.1)",
     INSTALL_NVIDIA_CU128: "NVIDIA GPU (CUDA 12.8 / Blackwell)",
     INSTALL_ROCM: "AMD GPU (ROCm 6.1)",
+    INSTALL_ROCM_WINDOWS: "AMD GPU (ROCm for Windows)",
 }
 
 # Chatterbox fork URL (used for CUDA 12.8 installation)
@@ -1235,13 +1237,20 @@ def detect_nvidia_gpu():
         return False, None
 
 
-def detect_amd_gpu_linux():
+def detect_amd_gpu():
     """
-    Detect AMD GPU using rocm-smi (Linux-only).
+    Detect AMD GPU. Uses Vulkan on Windows (rocm-smi is Linux-only).
 
     Returns:
         Tuple of (found: bool, gpu_name: str or None)
     """
+    if is_windows():
+        return _detect_amd_gpu_windows()
+    return _detect_amd_gpu_rocm_smi()
+
+
+def _detect_amd_gpu_rocm_smi():
+    """Detect AMD GPU using rocm-smi (Linux/macOS)."""
     try:
         result = subprocess.run(
             ["rocm-smi", "--showproductname"],
@@ -1251,22 +1260,17 @@ def detect_amd_gpu_linux():
         )
 
         if result.returncode == 0 and result.stdout.strip():
-            # Parse output to find GPU name
             lines = result.stdout.strip().split("\n")
             for line in lines:
                 if "Card series" in line or "GPU" in line:
-                    # Extract the name part
                     parts = line.split(":")
                     if len(parts) > 1:
                         return True, parts[1].strip()
-
-            # If we got output but couldn't parse name, still report found
             return True, "AMD GPU (unknown model)"
 
         return False, None
 
     except FileNotFoundError:
-        # rocm-smi not found
         return False, None
     except subprocess.TimeoutExpired:
         return False, None
@@ -1274,78 +1278,149 @@ def detect_amd_gpu_linux():
         return False, None
 
 
-def detect_amd_gpu_windows():
+def _detect_amd_gpu_windows():
     """
-    Detect AMD GPU on Windows using WMI or Vulkan ICD registry.
+    Detect AMD GPU on Windows using Vulkan.
 
-    Returns:
-        Tuple of (found: bool, gpu_name: str or None)
+    Vulkan is available on any Windows system with AMD drivers installed.
+    Parses the DeviceID string which contains the marketing name.
     """
-    # Method 1: WMI (preferred) - built-in, no extra deps
     try:
-        import wmi
-        for gpu in wmi.WMI().Win32_VideoController():
-            name = gpu.Name
-            # Check for AMD/Radeon/RX patterns
-            if any(p in name for p in ["AMD", "Radeon", "RX ", "RX-", "Radeon RX"]):
-                return True, name.strip()
-        # WMI available but no AMD GPU found
-        return False, None
-    except ImportError:
-        pass  # wmi not installed, try registry
-    except Exception:
-        pass  # WMI failed, try registry
+        result = subprocess.run(
+            ["vulkaninfo", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
-    # Method 2: Check Vulkan ICD registry (works without wmi module)
+        if result.returncode != 0:
+            return False, None
+
+        import json
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return False, None
+
+        # Walk the Vulkan JSON structure to find AMD device
+        devices = (
+            data.get("devices", []) or
+            data.get(" Vulkan Info", {}).get("Devices", []) or
+            []
+        )
+
+        for dev in devices:
+            device_name = dev.get("deviceName", "") or dev.get("device-name", "") or ""
+            device_id_str = dev.get("deviceID_str", "") or ""
+
+            # Check for AMD Vendor ID (0x1002) in device ID string
+            is_amd = "1002" in device_id_str.lower() or "amd" in device_name.lower()
+
+            if is_amd and device_name:
+                return True, device_name
+
+        # Fallback: try parsing plain-text vulkaninfo
+        return _detect_amd_gpu_windows_fallback()
+
+    except FileNotFoundError:
+        # vulkaninfo not installed — try registry fallback
+        return _detect_amd_gpu_windows_registry()
+    except subprocess.TimeoutExpired:
+        return False, None
+    except Exception:
+        return False, None
+
+
+def _detect_amd_gpu_windows_fallback():
+    """Parse plain-text vulkaninfo output for AMD GPU name."""
+    try:
+        result = subprocess.run(
+            ["vulkaninfo"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            return False, None
+
+        output = result.stdout
+        # AMD devices contain "0x1002" (Vendor ID) and a name like "Radeon RX 6750 XT"
+        lines = output.split("\n")
+        for i, line in enumerate(lines):
+            if "deviceName" in line and "Radeon" in line:
+                # e.g. "GPU 0      : Radeon RX 6750 XT        ...\n  deviceName = Radeon RX 6750 XT"
+                parts = line.split("=")
+                if len(parts) > 1:
+                    name = parts[1].strip()
+                    if name:
+                        return True, name
+            # Also catch "AMD Radeon" style names
+            if "AMD Radeon" in line or "Radeon RX" in line:
+                name = line.strip().split("=")[-1].strip()
+                if name and len(name) > 2:
+                    return True, name
+
+        return False, None
+
+    except Exception:
+        return False, None
+
+
+def _detect_amd_gpu_windows_registry():
+    """
+    Fallback: detect AMD GPU from Windows registry.
+
+    Checks the DirectX adapter registry key which lists all graphics devices.
+    """
     try:
         import winreg
-        # Vulkan ICDs are registered under this key:
-        # HKLM\SOFTWARE\Khronos\Vulkan\Devices\<index>
-        # Each device has a `deviceName` value
-        vk_key = winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\Khronos\Vulkan\Devices",
-            0,
-            winreg.KEY_READ,
-        )
+        amd_key = None
+
+        for flag in [0, winreg.KEY_READ | winreg.KEY_WOW64_32KEY]:
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}",
+                    0, flag
+                )
+                amd_key = key
+                break
+            except FileNotFoundError:
+                continue
+
+        if not amd_key:
+            return False, None
+
         try:
-            idx = 0
+            i = 0
             while True:
                 try:
-                    subkey_name = winreg.EnumKey(vk_key, idx)
-                    dev_key = winreg.OpenKey(vk_key, subkey_name, 0, winreg.KEY_READ)
-                    try:
-                        dev_name, _ = winreg.QueryValueEx(dev_key, "deviceName")
-                        if any(p in dev_name for p in ["AMD", "Radeon", "RX ", "Radeon RX"]):
-                            winreg.CloseKey(dev_key)
-                            winreg.CloseKey(vk_key)
-                            return True, dev_name.strip()
-                    except FileNotFoundError:
-                        pass
-                    winreg.CloseKey(dev_key)
+                    subkey_name = winreg.EnumKey(amd_key, i)
+                    i += 1
+                    if subkey_name == "0000":
+                        try:
+                            dev_key = winreg.OpenKey(amd_key, subkey_name)
+                            try:
+                                driver_desc, _ = winreg.QueryValueEx(dev_key, "DriverDesc")
+                                driver_desc: str
+                                if "AMD" in driver_desc or "Radeon" in driver_desc or "ATI" in driver_desc:
+                                    return True, driver_desc
+                            except FileNotFoundError:
+                                pass
+                            finally:
+                                winreg.CloseKey(dev_key)
+                        except FileNotFoundError:
+                            pass
                 except OSError:
                     break
-                idx += 1
-        except OSError:
-            pass
-        winreg.CloseKey(vk_key)
+        finally:
+            winreg.CloseKey(amd_key)
+
+        return False, None
+
     except Exception:
-        pass
-
-    return False, None
-
-
-def detect_amd_gpu():
-    """
-    Detect AMD GPU.
-
-    Returns:
-        Tuple of (found: bool, gpu_name: str or None)
-    """
-    if is_windows():
-        return detect_amd_gpu_windows()
-    else:
-        return detect_amd_gpu_linux()
+        return False, None
 
 
 def detect_gpu():
@@ -1391,6 +1466,8 @@ def get_default_choice(gpu_info):
         return INSTALL_NVIDIA
     elif gpu_info["amd"] and is_linux():
         return INSTALL_ROCM
+    elif gpu_info["amd"] and is_windows():
+        return INSTALL_ROCM_WINDOWS
     else:
         return INSTALL_CPU
 
@@ -1406,17 +1483,16 @@ def show_installation_menu(gpu_info, default_choice):
     Returns:
         Selected installation type string
     """
-    # Menu options — ROCm (4) only shown on Linux
-    options = [
-        ("1", "CPU Only", "No GPU acceleration - works on any system"),
-        ("2", "NVIDIA GPU (CUDA 12.1)", "Standard for RTX 20/30/40 series"),
-        ("3", "NVIDIA GPU (CUDA 12.8)", "For RTX 5090 / Blackwell GPUs only"),
-    ]
-    if is_linux():
-        options.append(("4", "AMD GPU (ROCm 6.1)", "For AMD GPUs on Linux"))
+    # Map install types to menu numbers
+    MENU_MAP = {
+        "1": INSTALL_CPU,
+        "2": INSTALL_NVIDIA,
+        "3": INSTALL_NVIDIA_CU128,
+        "4": INSTALL_ROCM,
+        "5": INSTALL_ROCM_WINDOWS,
+    }
 
-    # Build MENU_MAP from options so it matches what the user sees
-    MENU_MAP = {num: install_type for num, _, _ in options}
+    # Reverse map for showing default
     REVERSE_MAP = {v: k for k, v in MENU_MAP.items()}
     default_num = REVERSE_MAP.get(default_choice, "1")
 
@@ -1433,7 +1509,8 @@ def show_installation_menu(gpu_info, default_choice):
         print(f"   NVIDIA GPU: {Colors.DIM}Not detected{Colors.RESET}")
 
     if gpu_info["amd"]:
-        print_success(f"   AMD GPU:    Detected ({gpu_info['amd_name']})")
+        amd_type = " (ROCm for Windows)" if gpu_info["amd_name"] and "RX 6" in gpu_info["amd_name"] else ""
+        print_success(f"   AMD GPU:    Detected ({gpu_info['amd_name']}){amd_type}")
     else:
         print(f"   AMD GPU:    {Colors.DIM}Not detected{Colors.RESET}")
 
@@ -1444,13 +1521,31 @@ def show_installation_menu(gpu_info, default_choice):
     print("=" * 60)
     print()
 
+    # Menu options with descriptions
+    options = [
+        ("1", "CPU Only", "No GPU acceleration - works on any system"),
+        ("2", "NVIDIA GPU (CUDA 12.1)", "Standard for RTX 20/30/40 series"),
+        ("3", "NVIDIA GPU (CUDA 12.8)", "For RTX 5090 / Blackwell GPUs only"),
+        ("4", "AMD GPU (ROCm 6.1)", "For AMD GPUs on Linux"),
+        ("5", "AMD GPU (ROCm for Windows)", "For AMD RX 6000 series on Windows 11"),
+    ]
+
     for num, name, desc in options:
         # Determine if this is the default
         is_default = num == default_num
+
+        # Check for special warnings
+        warning = ""
+        if num == "4" and is_windows():
+            warning = f" {Colors.YELLOW}⚠️  Not supported on Windows{Colors.RESET}"
+        if num == "5" and not is_windows():
+            warning = f" {Colors.YELLOW}⚠️  Windows 11 only{Colors.RESET}"
+
         # Build the option line
         default_marker = f" {Colors.GREEN}[DEFAULT]{Colors.RESET}" if is_default else ""
+
         print(f"   [{num}] {name}{default_marker}")
-        print(f"       {Colors.DIM}{desc}{Colors.RESET}")
+        print(f"       {Colors.DIM}{desc}{warning}{Colors.RESET}")
         print()
 
     # Get user input
@@ -1467,8 +1562,7 @@ def show_installation_menu(gpu_info, default_choice):
             if choice in MENU_MAP:
                 return MENU_MAP[choice]
 
-            valid = ', '.join(sorted(MENU_MAP.keys()))
-            print_warning(f"   Invalid choice '{choice}'. Please enter {valid}.")
+            print_warning(f"   Invalid choice '{choice}'. Please enter 1, 2, 3, 4, or 5.")
             print()
 
         except (EOFError, KeyboardInterrupt):
@@ -1587,6 +1681,136 @@ def install_chatterbox_no_deps(venv_pip):
     return True
 
 
+ROCM_WINDOWS_WHEELS_RELEASE = "v0.1.0-rocm-wheels"
+ROCM_WINDOWS_WHEELS_REPO = "phattbeats/Chatterbox-TTS-Server"
+ROCM_WINDOWS_WHEEL_ASSETS = [
+    # (asset_name, friendly_name, size_mb)
+    ("rocm_sdk_core-7.1.1-py3-none-win_amd64.whl",         "ROCm SDK Core",            621),
+    ("rocm_sdk_libraries_gfx103x_all-7.1.1-py3-none-win_amd64.whl", "ROCm SDK gfx103X Libraries", 203),
+    ("torch-2.9.1+rocmsdk20251207-cp312-cp312-win_amd64.whl",      "PyTorch ROCm",             513),
+    ("torchaudio-2.9.0+rocmsdk20251207-cp312-cp312-win_amd64.whl", "torchaudio",                1),
+    ("torchvision-0.24.0+rocmsdk20251207-cp312-cp312-win_amd64.whl", "torchvision",             2),
+]
+ROCM_WINDOWS_WHEEL_DEVEL = (
+    "rocm_sdk_devel-7.1.1-py3-none-win_amd64.whl",
+    "ROCm SDK Devel",
+    1261,
+)
+ROCM_WINDOWS_TOTAL_MB = sum(s for _, _, s in ROCM_WINDOWS_WHEEL_ASSETS) + ROCM_WINDOWS_WHEEL_DEVEL[2]
+
+
+def _get_gh_release_asset_url(asset_name):
+    """Get download URL for a GitHub release asset via unauthenticated API."""
+    import urllib.request
+    api_url = f"https://api.github.com/repos/{ROCM_WINDOWS_WHEELS_REPO}/releases/tags/{ROCM_WINDOWS_WHEELS_RELEASE}"
+    try:
+        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            release = json.loads(resp.read())
+        for asset in release.get("assets", []):
+            if asset["name"] == asset_name:
+                return asset["browser_download_url"]
+        return None
+    except Exception:
+        return None
+
+
+def install_rocm_windows_wheels(venv_pip, root_dir):
+    """
+    Download ROCm Windows wheels from GitHub release and install via pip.
+
+    Wheels are at: https://github.com/phattbeats/Chatterbox-TTS-Server/releases/tag/v0.1.0-rocm-wheels
+
+    Downloads all required .whl files (~2.4 GB total) to a local wheels/
+    directory, then runs pip install with --find-links pointing at that dir.
+    This avoids any pip index lookup (which would fail on a private/internal index).
+
+    Wheel order matters: SDK core, gfx103X libs, torch stack.
+
+    Args:
+        venv_pip: Path to pip executable in venv
+        root_dir: Root directory of the project
+
+    Returns:
+        True on success, False on failure
+    """
+    wheels_dir = root_dir / "wheels"
+    wheels_dir.mkdir(exist_ok=True)
+
+    print_substep(f"Downloading ROCm Windows wheels (~{ROCM_WINDOWS_TOTAL_MB} MB total)...")
+
+    # Check disk space first (rough estimate)
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(root_dir)
+        free_gb = free // (1024 ** 3)
+        if free_gb < 8:
+            print_warning(
+                f"Low disk space: ~{free_gb} GB free. "
+                f"ROCm Windows wheels need ~{ROCM_WINDOWS_TOTAL_MB} MB. "
+                "Install may fail. Consider freeing up space."
+            )
+    except Exception:
+        pass
+
+    # Download all assets in order
+    all_wheels = ROCM_WINDOWS_WHEEL_ASSETS + (ROCM_WINDOWS_WHEEL_DEVEL,)
+    wheel_paths = []
+
+    for asset_name, friendly_name, size_mb in all_wheels:
+        wheel_path = wheels_dir / asset_name
+        if wheel_path.exists() and wheel_path.stat().st_size > 1024:
+            print_substep(f"  {friendly_name}: already downloaded ({size_mb} MB)", "done")
+            wheel_paths.append(str(wheel_path))
+            continue
+
+        print_substep(f"  {friendly_name}: downloading (~{size_mb} MB)...")
+        url = _get_gh_release_asset_url(asset_name)
+        if not url:
+            print_error(f"  Could not find asset '{asset_name}' in GitHub release.")
+            return False
+
+        try:
+            import urllib.request
+            req = urllib.request.Request(url, headers={"Accept": "application/octet-stream"})
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                total_size = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                chunk_size = 8192
+                with open(wheel_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                actual_size = wheel_path.stat().st_size
+                if actual_size < 1024:
+                    print_error(f"  Downloaded file is too small ({actual_size} bytes) — asset may be missing.")
+                    wheel_path.unlink(missing_ok=True)
+                    return False
+        except Exception as e:
+            print_error(f"  Download failed: {e}")
+            wheel_path.unlink(missing_ok=True)
+            return False
+
+        print_substep(f"  {friendly_name}: downloaded ({size_mb} MB)", "done")
+        wheel_paths.append(str(wheel_path))
+
+    # Install from local wheels using --find-links (no index lookup)
+    print_substep(f"Installing {len(wheel_paths)} wheel(s) from local files...")
+    wheel_args = " ".join([f'"{w}"' for w in wheel_paths])
+    cmd = f'"{venv_pip}" install --no-index --find-links "{wheels_dir}" {wheel_args}'
+
+    success = run_command_with_progress(cmd, description="Installing ROCm wheels")
+    if not success:
+        print_substep("ROCm wheel installation failed", "error")
+        return False
+
+    print_substep("ROCm wheels installed", "done")
+    return True
+
+
 def perform_installation(venv_pip, install_type, root_dir):
     """
     Perform installation based on selected type.
@@ -1605,9 +1829,12 @@ def perform_installation(venv_pip, install_type, root_dir):
         print_error(f"Unknown installation type: {install_type}")
         return False
 
-    # ROCm requires a two-step install: ROCm PyTorch wheels first, then deps
-    # (rocm-windows uses pre-built wheels from phatt.vip, no init file needed)
-    if install_type in (INSTALL_ROCM, INSTALL_ROCM_WINDOWS):
+    # ROCm requires a two-step install: ROCm wheels first, then deps.
+    # INSTALL_ROCM_WINDOWS downloads wheels from GitHub release and installs locally.
+    if install_type == INSTALL_ROCM_WINDOWS:
+        if not install_rocm_windows_wheels(venv_pip, root_dir):
+            return False
+    elif install_type == INSTALL_ROCM:
         rocm_init_path = root_dir / REQUIREMENTS_ROCM_INIT
         if not rocm_init_path.exists():
             print_error(f"ROCm init file not found: {REQUIREMENTS_ROCM_INIT}")
@@ -1617,8 +1844,15 @@ def perform_installation(venv_pip, install_type, root_dir):
             return False
 
     # Step 1: Install main requirements
-    if not install_requirements(venv_pip, requirements_file, root_dir):
-        return False
+    # For rocm-windows, this step is skipped — all packages (torch, torchaudio,
+    # torchvision, conformer, etc.) are installed via install_rocm_windows_wheels()
+    # which handles the full dependency stack. requirements-rocm-windows.txt is not
+    # used because it points to a pip index (wheels.phatt.vip) that is no longer live.
+    if install_type == INSTALL_ROCM_WINDOWS:
+        print_substep("Skipping requirements file (ROCm wheels already installed)", "info")
+    else:
+        if not install_requirements(venv_pip, requirements_file, root_dir):
+            return False
 
     # Step 2: Install chatterbox separately with --no-deps for ALL install types.
     # This prevents pip from pulling in conflicting torch versions and avoids
@@ -2618,17 +2852,15 @@ def main():
         print()
         print_substep(f"Selected: {type_name}", "done")
 
-        # rocm-windows: pre-flight GPU validation
+        # rocm-windows: pre-flight GPU validation (no torch import — not installed yet)
         if install_type == INSTALL_ROCM_WINDOWS:
-            import torch
-            if not torch.cuda.is_available():
-                print_error("CUDA not available. --rocm-windows requires AMD GPU with ROCm support.")
-                sys.exit(1)
-            props = torch.cuda.get_device_properties(0)
-            arch = getattr(props, "gcnArchName", "") or ""
-            if not arch.startswith("gfx103"):
-                print_warning(f"Expected AMD gfx103X GPU (RX 6000 series), got: {arch}")
-                print_warning("This flag is designed for RX 6700/6750/6800 XT. May not work on other GPUs.")
+            if is_windows():
+                amd_found, _ = _detect_amd_gpu_windows()
+                amd_reg_found, _ = _detect_amd_gpu_windows_registry()
+                if not amd_found and not amd_reg_found:
+                    print_error("No AMD GPU detected on Windows. --rocm-windows requires an AMD Radeon RX 6000 series GPU.")
+                    print_substep("Detected hardware: run 'start.bat' without --rocm-windows to see GPU detection output.", "info")
+                    sys.exit(1)
 
         # ROCm warning on Windows
         # Only warn for Linux ROCm on Windows; rocm-windows is designed for this
@@ -2681,7 +2913,10 @@ def main():
             print()
             print("  4. Try installing manually:")
             requirements_file = REQUIREMENTS_MAP.get(install_type, "requirements.txt")
-            if install_type == INSTALL_ROCM:
+            if install_type == INSTALL_ROCM_WINDOWS:
+                print(f"     See PHATT_FORK.md for manual install steps.")
+                print(f"     Wheels are at: https://github.com/{ROCM_WINDOWS_WHEELS_REPO}/releases/tag/{ROCM_WINDOWS_WHEELS_RELEASE}")
+            elif install_type == INSTALL_ROCM:
                 print(f"     pip install -r {REQUIREMENTS_ROCM_INIT}")
                 print(f"     pip install -r {requirements_file}")
                 print(f"     pip install --no-deps {CHATTERBOX_REPO}")
