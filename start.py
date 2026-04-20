@@ -1817,7 +1817,7 @@ def install_rocm_windows_wheels(venv_pip, root_dir):
         pass
 
     # Download all assets in order
-    all_wheels = ROCM_WINDOWS_WHEEL_ASSETS + (ROCM_WINDOWS_WHEEL_DEVEL,)
+    all_wheels = ROCM_WINDOWS_WHEEL_ASSETS + [ROCM_WINDOWS_WHEEL_DEVEL]
     wheel_paths = []
 
     for asset_name, friendly_name, size_mb in all_wheels:
