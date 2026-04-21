@@ -2508,13 +2508,17 @@ def wait_for_server(host, port, timeout=SERVER_STARTUP_TIMEOUT):
     return False
 
 
-def launch_server(venv_python, root_dir):
+def launch_server(root_dir, venv_python=None):
     """
-    Launch the server as a subprocess.
+    Launch the server as a subprocess using the correct Python interpreter.
+
+    When using embedded Python (use_embedded=True), the embedded interpreter
+    is always used even if venv_python was passed — this ensures server.py
+    runs with the same Python that installed the packages.
 
     Args:
-        venv_python: Path to Python executable in venv
         root_dir: Root directory of the project
+        venv_python: Optional path to venv Python (ignored if embedded is active)
 
     Returns:
         subprocess.Popen process object
@@ -2525,26 +2529,34 @@ def launch_server(venv_python, root_dir):
         print_error(f"{SERVER_SCRIPT} not found!")
         return None
 
+    # Determine the correct Python interpreter
+    if is_windows() and is_embedded_python_available(root_dir):
+        # Embedded Python on Windows — use it explicitly to avoid system Python
+        _, embedded_python, _ = get_embedded_python_paths(root_dir)
+        python_exe = embedded_python
+        if VERBOSE_MODE:
+            print_substep(f"Using embedded Python: {embedded_python}", "info")
+    elif venv_python:
+        python_exe = Path(venv_python)
+    else:
+        print_error("No Python interpreter available!")
+        return None
+
     print_substep(f"Starting {SERVER_SCRIPT}...")
 
     # Create subprocess
     # On Windows, we don't want to create a new console window
     kwargs = {}
     if is_windows():
-        # CREATE_NO_WINDOW flag
         kwargs["creationflags"] = 0
 
     # For embedded Python on Windows, ensure the interpreter directory is on
-    # PATH so that python310.dll, vcruntime140.dll, and other co-located DLLs
+    # PATH so that python312.dll, vcruntime140.dll, and other co-located DLLs
     # are discoverable by Windows when loading native extensions (.pyd files).
     # This complements the sitecustomize.py os.add_dll_directory() approach.
     env = None
     embedded_dir = root_dir / EMBEDDED_PYTHON_DIR
-    if (
-        is_windows()
-        and embedded_dir.exists()
-        and str(venv_python).startswith(str(embedded_dir))
-    ):
+    if is_windows() and embedded_dir.exists() and str(python_exe).startswith(str(embedded_dir)):
         env = os.environ.copy()
         env["PATH"] = (
             f"{embedded_dir}{os.pathsep}"
@@ -2555,7 +2567,7 @@ def launch_server(venv_python, root_dir):
             print_substep("Injected embedded Python into subprocess PATH", "info")
 
     process = subprocess.Popen(
-        [str(venv_python), str(server_script)],
+        [str(python_exe), str(server_script)],
         cwd=str(root_dir),
         env=env,
         **kwargs,
@@ -3122,7 +3134,7 @@ def main():
     # ========================================================================
     print_step(6, total_steps, "Launching Chatterbox TTS Server...")
 
-    server_process = launch_server(venv_python, root_dir)
+    server_process = launch_server(root_dir, venv_python)
 
     if server_process is None:
         print_error("Failed to launch server!")
