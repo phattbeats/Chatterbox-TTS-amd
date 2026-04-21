@@ -1936,6 +1936,16 @@ def install_rocm_windows_wheels(venv_pip, root_dir):
         return False
 
     print_substep("ROCm wheels installed", "done")
+
+    # Install remaining non-ROCm dependencies (PyYAML, uvicorn, etc.) via pip
+    # These are not in the ROCm wheel set and are needed for server.py
+    print_substep("Installing remaining server dependencies (yaml, uvicorn, etc.)...")
+    core_deps_cmd = f'"{venv_pip}" install pyyaml uvicorn[standard] python-multipart'
+    deps_ok = run_command_with_progress(core_deps_cmd, description="Installing server dependencies")
+    if not deps_ok:
+        print_substep("Server dependencies installation failed", "warning")
+        # Don't fail the whole install — yaml might still be available
+
     return True
 
 
