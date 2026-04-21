@@ -1777,6 +1777,48 @@ ROCM_WINDOWS_WHEEL_DEVEL = (
 ROCM_WINDOWS_TOTAL_MB = sum(s for _, _, s in ROCM_WINDOWS_WHEEL_ASSETS) + ROCM_WINDOWS_WHEEL_DEVEL[2]
 
 
+def _create_rocm_stub_wheel(wheels_dir):
+    """
+    Create a stub wheel for the virtual 'rocm' package.
+
+    torch's metadata declares 'rocm==7.1.1' as a dependency, but AMD never
+    published a 'rocm' package on PyPI. pip finds the unrelated rocm==0.1.0
+    and fails. This stub satisfies the metadata without providing any real
+    ROCm files — actual ROCm libraries come from the SDK wheels.
+
+    Args:
+        wheels_dir: Directory to write the stub wheel to
+    """
+    import zipfile
+    stub_name = "rocm-7.1.1-py3-none-any.whl"
+    stub_path = os.path.join(wheels_dir, stub_name)
+    if os.path.exists(stub_path) and os.path.getsize(stub_path) > 100:
+        return  # already exists
+
+    dist_info = "rocm-7.1.1.dist-info"
+    metadata = (
+        "Metadata-Version: 2.1\n"
+        "Name: rocm\n"
+        "Version: 7.1.1\n"
+        "Summary: AMD ROCm platform stub (PHATT TECH)\n"
+        "License: MIT\n"
+        "Platform: Windows\n"
+        "Requires-Dist: setuptools\n"
+    )
+    wheel_txt = "Wheel-Version: 1.0\nGenerator: phatt-tech\n"
+    # RECORD — pip will rewrite on install
+    record = (
+        f"{dist_info}/METADATA,sha256=placeholder,0\n"
+        f"{dist_info}/WHEEL,sha256=placeholder,0\n"
+        f"{dist_info}/RECORD,,\n"
+    )
+
+    with zipfile.ZipFile(stub_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{dist_info}/METADATA", metadata)
+        zf.writestr(f"{dist_info}/WHEEL", wheel_txt)
+        zf.writestr(f"{dist_info}/RECORD", record)
+
+
 def _get_gh_release_asset_url(asset_name):
     """Get download URL for a GitHub release asset via unauthenticated API."""
     import urllib.request
@@ -1875,7 +1917,15 @@ def install_rocm_windows_wheels(venv_pip, root_dir):
         print_substep(f"  {friendly_name}: downloaded ({size_mb} MB)", "done")
         wheel_paths.append(str(wheel_path))
 
-    # Install from local wheels using --find-links (no index lookup)
+    # Create a stub wheel for the virtual 'rocm==7.1.1' package.
+    # torch's metadata declares 'rocm==7.1.1' as a dependency, but AMD never
+    # published a 'rocm' package on PyPI. pip finds the unrelated rocm==0.1.0
+    # and fails. This stub satisfies the metadata without providing any real
+    # ROCm files — actual ROCm libraries come from the SDK wheels.
+    _create_rocm_stub_wheel(str(wheels_dir))
+    wheel_paths.append(str(wheels_dir / "rocm-7.1.1-py3-none-any.whl"))
+
+    # Install from local wheels using --find-links
     print_substep(f"Installing {len(wheel_paths)} wheel(s) from local files...")
     wheel_args = " ".join([f'"{w}"' for w in wheel_paths])
     cmd = f'"{venv_pip}" install --find-links "{wheels_dir}" {wheel_args}'
