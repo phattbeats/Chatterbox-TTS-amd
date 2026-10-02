@@ -1038,33 +1038,89 @@ Turbo supports native tags like `[laugh]`, `[cough]`, and `[chuckle]` for more r
 
 ### API Endpoints (`/docs` for interactive details)
 
-The primary endpoint for TTS generation is `/tts`, which offers detailed control over the synthesis process.
+The primary endpoint for TTS generation is `/tts`. The OpenAI-compatible `/v1/audio/speech` and `/v1/audio/voices` exist for drop-in replacement of OpenAI's TTS API.
 
-*   **`/tts` (POST):** Main endpoint for speech generation.
-    *   **Request Body (`CustomTTSRequest`):**
-        *   `text` (string, required): Plain text to synthesize.
-        *   `voice_mode` (string, "predefined" or "clone", default "predefined"): Specifies voice source.
-        *   `predefined_voice_id` (string, optional): Filename of predefined voice (if `voice_mode` is "predefined").
-        *   `reference_audio_filename` (string, optional): Filename of reference audio (if `voice_mode` is "clone").
-        *   `output_format` (string, "wav" or "opus", default "wav").
-        *   `split_text` (boolean, default True): Whether to chunk long text.
-        *   `chunk_size` (integer, default 120): Target characters per chunk.
-        *   `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`: Generation parameters overriding defaults.
-    *   **Response:** Streaming audio (`audio/wav` or `audio/opus`).
-*   **`/v1/audio/speech` (POST):** OpenAI-compatible.
-    *   `input`: Text.
-    *   `voice`: 'S1', 'S2', 'dialogue', 'predefined_voice_filename.wav', or 'reference_filename.wav'.
-    *   `response_format`: 'opus' or 'wav'.
-    *   `speed`: Playback speed factor (0.5-2.0).
-    *   `seed`: (Optional) Integer seed, -1 for random.    
-*   **Helper Endpoints (mostly for UI):**
-    *   `GET /api/ui/initial-data`: Fetches all initial configuration, file lists, and presets for the UI.
-    *   `POST /save_settings`: Saves partial updates to `config.yaml`.
-    *   `POST /reset_settings`: Resets `config.yaml` to defaults.
-    *   `GET /get_reference_files`: Lists files in `reference_audio/`.
-    *   `GET /get_predefined_voices`: Lists formatted voices from `voices/`.
-    *   `POST /upload_reference`: Uploads reference audio files.
-    *   `POST /upload_predefined_voice`: Uploads predefined voice files.
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/tts` | POST | Custom TTS, full param set |
+| `/v1/audio/speech` | POST | OpenAI-compatible TTS, supports `stream: true` (`pcm` / `wav`) |
+| `/v1/audio/voices` | GET | OpenAI-compatible voice listing |
+| `/api/ui/initial-data` | GET | UI bootstrap + comprehensive health check |
+| `/api/model-info` | GET | Loaded model status, type, supported languages |
+| `/api/unload` | POST | Release GPU memory without restarting the server |
+| `/save_settings` | POST | Persist partial updates to `config.yaml` |
+| `/reset_settings` | POST | Reset `config.yaml` to defaults |
+| `/get_reference_files` | GET | List files in `reference_audio/` |
+| `/get_predefined_voices` | GET | List formatted voices from `voices/` |
+| `/upload_reference` | POST | Upload reference audio files |
+| `/upload_predefined_voice` | POST | Upload predefined voice files |
+| `/docs` | GET | Interactive Swagger UI |
+
+**Fork note:** this AMD fork's `/tts` endpoint does not expose `stream:true`; chunk-level streaming is available on `/v1/audio/speech` only.
+
+**`/tts` request body (`CustomTTSRequest`):**
+
+- `text` (string, required) — plain text to synthesize.
+- `voice_mode` ("predefined" | "clone", default "predefined").
+- `predefined_voice_id` (string) — voice filename when `voice_mode=predefined`.
+- `reference_audio_filename` (string) — reference filename when `voice_mode=clone`.
+- `output_format` ("wav" | "mp3" | "opus", default "wav").
+- `split_text` (boolean, default `true`) — chunk long text by sentence.
+- `chunk_size` (integer 50–500, default 120).
+- `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language` — generation parameters that override defaults.
+
+**`/v1/audio/speech` request body (`OpenAISpeechRequest`):**
+
+- `model` (string, required) — accepted for OpenAI compatibility; not used to select a model.
+- `input` (string, required) — text to synthesize.
+- `voice` (string, required) — predefined voice filename or reference-audio filename.
+- `response_format` ("wav" | "opus" | "mp3" | "pcm", default "wav").
+- `speed` (float, default `1.0`).
+- `seed`, `language` — generation parameter overrides.
+- `stream` (boolean, optional, default unset) — if true, returns a `StreamingResponse` and
+  yields audio as each sentence/clause chunk is synthesized, instead of waiting for the full
+  input. Supported for `response_format="pcm"` (headerless raw 16-bit PCM, little-endian mono
+  at the engine's sample rate — the format OpenAI's own `pcm` response uses, and what clients
+  such as pipecat's `OpenAITTSService` expect from `with_streaming_response(...).iter_bytes()`)
+  and `response_format="wav"` (a WAV header is sent once, followed by raw PCM16 frames,
+  mirroring `/tts`'s existing `stream=true` behavior). `stream=true` with `opus`/`mp3` is not
+  supported; the request falls back to a non-streaming response and logs a warning. If the
+  request omits `stream` entirely — the common case for OpenAI-SDK clients, which call
+  `with_streaming_response.create(...)` without ever setting this field — the server falls
+  back to the `server.openai_stream_by_default` config value (`false` unless the operator
+  opts in). An explicit `true`/`false` in the request always overrides that server default.
+- `chunk_size` (integer 50–500, optional) — target character length per sentence/clause chunk
+  when `stream=true`. Defaults to `server.openai_stream_chunk_size` in `config.yaml` (`50`).
+  Chunking is sentence-aware first, then falls back to clause boundaries (`,`, `;`, `:`) for a
+  single sentence that alone exceeds `chunk_size`, so short one-sentence turns (60-90 chars,
+  common in voice-agent prompts) still get split and start streaming before the full sentence
+  finishes synthesizing. Ignored when streaming is off, where behavior is unchanged from
+  before (whole input synthesized, then encoded to the requested container format).
+
+**Streaming by default for clients that never send `stream` (config option):**
+
+Most OpenAI-SDK-based clients — including pipecat's `OpenAITTSService`, which only sends
+`model`, `voice`, `input`, and `response_format` — never send the `stream` field at all. To
+turn streaming on for such clients without changing their code, set in `config.yaml`:
+
+```yaml
+server:
+  openai_stream_by_default: true
+```
+
+With that set, `POST /v1/audio/speech` streams (for `response_format="pcm"`/`"wav"`) even when
+the request body omits `stream`. A request that explicitly sets `"stream": false` still gets a
+non-streaming response; `"stream": true` still streams regardless of this setting. Default is
+`false`, so existing deployments that don't add this key see no behavior change.
+
+**Example — streaming OpenAI-compatible TTS (raw PCM, e.g. for a realtime voice agent):**
+
+```bash
+curl -X POST http://localhost:8004/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","input":"The first chunk arrives quickly.","voice":"Emily.wav","response_format":"pcm","stream":true}' \
+  --output stream.pcm
+```
 # 🐳 Docker Installation
 
 Run Chatterbox TTS Server easily using Docker. The recommended method uses Docker Compose, which is pre-configured for different GPU types.
