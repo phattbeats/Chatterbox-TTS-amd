@@ -84,6 +84,9 @@ MODEL_SELECTOR_MAP = {
     "chatterbox-nano": "nano",
     "nano": "nano",
     "resembleai/chatterbox-nano": "nano",
+    # Full Turbo split across precisions/devices to fit a 4 GB K2200 (see k2200_hybrid.py)
+    "chatterbox-turbo-k2200": "turbo-k2200",
+    "turbo-k2200": "turbo-k2200",
     # Multilingual model selectors
     "chatterbox-multilingual": "multilingual",
     "multilingual": "multilingual",
@@ -186,7 +189,7 @@ def _get_model_class(selector: str) -> tuple:
     selector_normalized = selector.lower().strip()
     model_type = MODEL_SELECTOR_MAP.get(selector_normalized)
 
-    if model_type in ("turbo", "nano"):
+    if model_type in ("turbo", "nano", "turbo-k2200"):
         if not TURBO_AVAILABLE:
             raise ImportError(
                 f"Model selector '{selector}' requires ChatterboxTurboTTS, "
@@ -242,9 +245,9 @@ def get_model_info() -> dict:
         "class_name": loaded_model_class_name,
         "device": model_device,
         "sample_rate": chatterbox_model.sr if chatterbox_model else None,
-        "supports_paralinguistic_tags": loaded_model_type in ("turbo", "nano"),
+        "supports_paralinguistic_tags": loaded_model_type in ("turbo", "nano", "turbo-k2200"),
         "available_paralinguistic_tags": (
-            TURBO_PARALINGUISTIC_TAGS if loaded_model_type in ("turbo", "nano") else []
+            TURBO_PARALINGUISTIC_TAGS if loaded_model_type in ("turbo", "nano", "turbo-k2200") else []
         ),
         "turbo_available_in_package": TURBO_AVAILABLE,
         "multilingual_available_in_package": MULTILINGUAL_AVAILABLE,
@@ -344,7 +347,7 @@ def load_model() -> bool:
                 f"Initializing {model_class.__name__} on device '{model_device}'..."
             )
             logger.info(f"Model type: {model_type}")
-            if model_type in ("turbo", "nano"):
+            if model_type in ("turbo", "nano", "turbo-k2200"):
                 logger.info(
                     f"Turbo model supports paralinguistic tags: {TURBO_PARALINGUISTIC_TAGS}"
                 )
@@ -352,6 +355,13 @@ def load_model() -> bool:
             # Load the model using from_pretrained - handles HuggingFace downloads automatically
             if model_type == "nano":
                 chatterbox_model = model_class.from_pretrained(device=model_device, nano=True)
+            elif model_type == "turbo-k2200":
+                import k2200_hybrid
+                from huggingface_hub import snapshot_download
+                ckpt = snapshot_download("ResembleAI/chatterbox-turbo",
+                                         allow_patterns=["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"],
+                                         ignore_patterns=["s3gen.safetensors"])  # only s3gen_meanflow is loaded
+                chatterbox_model = k2200_hybrid.apply(model_class.from_local(Path(ckpt), "cpu"))
             else:
                 chatterbox_model = model_class.from_pretrained(device=model_device)
 
