@@ -20,7 +20,7 @@ Runs the full **Chatterbox-Turbo** model, with paralinguistic tags (`[angry]`, `
 
 The voice-prompt prep runs on the CPU and is cached per prompt, so only the first request for a new voice is slow.
 
-Measured on a Quadro K2200: peak VRAM about 3.4 GB, about 2.4x slower than real time, and ASR-clean output with working tags.
+Measured on a Quadro K2200: peak VRAM about 2.3 GB (GPT-2 causal masks trimmed to 4096 positions), about 2.4x slower than real time, and ASR-clean output with working tags.
 
 ## Build and run
 

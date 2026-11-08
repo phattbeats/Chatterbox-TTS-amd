@@ -2,7 +2,7 @@
 
 Turbo in fp32 is ~3 GB of weights plus activations: it does not fit.
 Turbo in fp16 end to end fits but the S3Gen vocoder/flow garbles speech.
-What works (verified 2026-11-07, ASR-clean, peak ~3.4 GB, RTF ~2.4):
+What works (verified 2026-11-07, ASR-clean, RTF ~2.4):
   * T3 (the GPT-2-medium speech LM, where the expression lives): fp16 on GPU
   * S3Gen flow + HiFT vocoder: fp32 on GPU
   * S3Gen speech tokenizer (only used to prepare a voice prompt): fp32 on CPU
@@ -19,8 +19,26 @@ def _conds_to_gpu(model):
     model.conds.gen = {k: (v.to("cuda") if torch.is_tensor(v) else v) for k, v in model.conds.gen.items()}
 
 
+MAX_POSITIONS = 4096  # T3 prompt (cond + text) + generated speech tokens stay far below this
+
+
+def _trim_causal_masks(module, n=MAX_POSITIONS):
+    """GPT-2 keeps a bool causal mask of max_positions^2 per layer (8196^2 = 67 MB
+    x 24 layers = 1.6 GB on Turbo). Attention only ever slices the top-left corner,
+    so trimming to n x n keeps outputs identical and frees ~1.2 GB of VRAM."""
+    freed = 0
+    for m in module.modules():
+        b = getattr(m, "bias", None)
+        if torch.is_tensor(b) and b.dtype == torch.bool and b.dim() == 4 and b.shape[-1] > n:
+            freed += b.numel() - n * n
+            m.register_buffer("bias", b[:, :, :n, :n].clone(), persistent=False)
+    return freed
+
+
 def apply(model):
     """Patch a loaded (CPU) ChatterboxTurboTTS in place into the hybrid layout."""
+    freed = _trim_causal_masks(model.t3)
+    log.info("trimmed GPT-2 causal masks to %d positions (%.0f MB saved)", MAX_POSITIONS, freed / 2**20)
     model.t3 = model.t3.to("cuda", dtype=H)
     g = model.s3gen
     g.to("cuda")
