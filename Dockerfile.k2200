@@ -2,6 +2,7 @@
 # torch 2.5.1+cu121 is the newest CUDA build that still ships sm_50 kernels;
 # the cu128 path in Dockerfile drops this card. The torch wheel carries its own
 # CUDA runtime, so a plain Python base is enough (no nvidia/cuda base image).
+# triton is a torch dependency but only compiles for sm_70+; removed.
 # Default model: chatterbox-nano (fits 4 GB in fp32, faster than real time).
 FROM python:3.10-slim
 
@@ -20,6 +21,7 @@ RUN sed -E '/^--extra-index-url|^torch(vision|audio)?==/d' requirements.txt > /t
     && pip install -r /tmp/req.txt \
     && pip install --no-deps "git+https://github.com/resemble-ai/chatterbox.git@master" s3tokenizer==0.3.0 onnx==1.16.0 \
     && pip install "protobuf>=4.25.0" \
+    && pip uninstall -y triton \
     && apt-get purge -y git build-essential && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/req.txt
 
 COPY docker/patch_chatterbox_f32.py /tmp/patch.py
