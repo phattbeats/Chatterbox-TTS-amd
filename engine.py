@@ -80,6 +80,10 @@ MODEL_SELECTOR_MAP = {
     "chatterbox-turbo": "turbo",
     "turbo": "turbo",
     "resembleai/chatterbox-turbo": "turbo",
+    # Nano (110M, Turbo architecture, loaded via ChatterboxTurboTTS(nano=True))
+    "chatterbox-nano": "nano",
+    "nano": "nano",
+    "resembleai/chatterbox-nano": "nano",
     # Multilingual model selectors
     "chatterbox-multilingual": "multilingual",
     "multilingual": "multilingual",
@@ -182,7 +186,7 @@ def _get_model_class(selector: str) -> tuple:
     selector_normalized = selector.lower().strip()
     model_type = MODEL_SELECTOR_MAP.get(selector_normalized)
 
-    if model_type == "turbo":
+    if model_type in ("turbo", "nano"):
         if not TURBO_AVAILABLE:
             raise ImportError(
                 f"Model selector '{selector}' requires ChatterboxTurboTTS, "
@@ -193,7 +197,7 @@ def _get_model_class(selector: str) -> tuple:
         logger.info(
             f"Model selector '{selector}' resolved to Turbo model (ChatterboxTurboTTS)"
         )
-        return ChatterboxTurboTTS, "turbo"
+        return ChatterboxTurboTTS, model_type
 
     if model_type == "multilingual":
         if not MULTILINGUAL_AVAILABLE:
@@ -238,9 +242,9 @@ def get_model_info() -> dict:
         "class_name": loaded_model_class_name,
         "device": model_device,
         "sample_rate": chatterbox_model.sr if chatterbox_model else None,
-        "supports_paralinguistic_tags": loaded_model_type == "turbo",
+        "supports_paralinguistic_tags": loaded_model_type in ("turbo", "nano"),
         "available_paralinguistic_tags": (
-            TURBO_PARALINGUISTIC_TAGS if loaded_model_type == "turbo" else []
+            TURBO_PARALINGUISTIC_TAGS if loaded_model_type in ("turbo", "nano") else []
         ),
         "turbo_available_in_package": TURBO_AVAILABLE,
         "multilingual_available_in_package": MULTILINGUAL_AVAILABLE,
@@ -340,13 +344,16 @@ def load_model() -> bool:
                 f"Initializing {model_class.__name__} on device '{model_device}'..."
             )
             logger.info(f"Model type: {model_type}")
-            if model_type == "turbo":
+            if model_type in ("turbo", "nano"):
                 logger.info(
                     f"Turbo model supports paralinguistic tags: {TURBO_PARALINGUISTIC_TAGS}"
                 )
 
             # Load the model using from_pretrained - handles HuggingFace downloads automatically
-            chatterbox_model = model_class.from_pretrained(device=model_device)
+            if model_type == "nano":
+                chatterbox_model = model_class.from_pretrained(device=model_device, nano=True)
+            else:
+                chatterbox_model = model_class.from_pretrained(device=model_device)
 
             # Store model metadata
             loaded_model_type = model_type
