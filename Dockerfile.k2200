@@ -8,19 +8,19 @@ FROM python:3.10-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     HF_HOME=/app/hf_cache NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ffmpeg git \
+RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ffmpeg git build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
 # GPU torch only (no CPU torch layer underneath it).
 RUN sed -E '/^--extra-index-url|^torch(vision|audio)?==/d' requirements.txt > /tmp/req.txt \
-    && pip install --index-url https://download.pytorch.org/whl/cu121 \
+    && pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
          torch==2.5.1+cu121 torchaudio==2.5.1+cu121 \
     && pip install -r /tmp/req.txt \
     && pip install --no-deps "git+https://github.com/resemble-ai/chatterbox.git@master" s3tokenizer==0.3.0 onnx==1.16.0 \
     && pip install "protobuf>=4.25.0" \
-    && apt-get purge -y git && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/req.txt
+    && apt-get purge -y git build-essential && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /root/.cache /tmp/req.txt
 
 COPY docker/patch_chatterbox_f32.py /tmp/patch.py
 RUN python /tmp/patch.py && rm /tmp/patch.py
