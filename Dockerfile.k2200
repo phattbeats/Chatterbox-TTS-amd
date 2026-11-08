@@ -1,4 +1,4 @@
-# Slim NVIDIA build for PHATT-RAID's Quadro K2200 (Maxwell, sm_50, 4 GB).
+# Slim NVIDIA build for 4 GB Maxwell cards such as the Quadro K2200 (sm_50).
 # torch 2.5.1+cu121 is the newest CUDA build that still ships sm_50 kernels;
 # the cu128 path in Dockerfile drops this card. The torch wheel carries its own
 # CUDA runtime, so a plain Python base is enough (no nvidia/cuda base image).
